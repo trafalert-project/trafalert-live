@@ -1,0 +1,90 @@
+version: "3.3"
+services:
+
+  videoloop:
+    image: ghcr.io/insight-platform/savant-adapters-gstreamer:0.2.10
+    restart: unless-stopped
+    volumes:
+      - zmq_sockets:/tmp/zmq-sockets
+      - ${FILE_LOCATION:-/tmp/data}:/data_location
+      - /tmp/video-loop-source-downloads
+    entrypoint: /opt/savant/adapters/gst/sources/video_loop.sh
+    # depends_on:
+    #   module_1280x720:
+    #     # This hangs the devcontainer, must override in extend.yml
+    #     # Is important in order to not lose frames at the beginning
+    #     condition: service_healthy
+    environment:
+        ZMQ_ENDPOINT: pub+connect:ipc:///tmp/zmq-sockets/input-video.ipc
+        SYNC_OUTPUT: True
+        # LOCATION: /data_location            # fixed path inside container, change volume mapping
+        LOCATION: https://eu-central-1.linodeobjects.com/savant-data/demo/AVG-TownCentre.mp4
+        DOWNLOAD_PATH: /tmp/video-loop-source-downloads
+        SOURCE_ID: source
+        #LOGLEVEL: debug
+
+  module_1280x720:
+    image: ghcr.io/insight-platform/savant-deepstream:0.2.11-6.3
+    volumes:
+      - zmq_sockets:/tmp/zmq-sockets
+      - ./module_sample.yml:/module.yml   # fixed path inside container
+      - ./models:/models
+      - /etc/timezone:/etc/timezone:ro
+      - /etc/localtime:/etc/localtime:ro
+    command: /module.yml
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    environment:
+      MODEL_PATH: /models
+      DOWNLOAD_PATH: /downloads
+      HEALTHCHECK_PORT: 8888
+      METRICS_FRAME_PERIOD: 1000
+      MODULE_NAME: trafalert
+      PROJECT_PATH: /module
+      LOGLEVEL: INFO
+      #LOGLEVEL: DEBUG
+      DETECTOR: ${DETECTOR}   # If available, for group selection
+      OBJMETA_IMPL: ${OBJMETA_IMPL:-savant_meta}
+      FILE_LOCATION: ${FILE_LOCATION:-}
+      ZMQ_SRC_ENDPOINT: sub+bind:ipc:///tmp/zmq-sockets/input-video.ipc
+      ZMQ_SINK_ENDPOINT: pub+connect:ipc:///tmp/zmq-sockets/output-video.ipc
+      MODULE_WIDTH: 1280
+      MODULE_HEIGHT: 720
+
+  sink:
+    # Keep version 0.3.11 or more for API availability
+    image: ghcr.io/insight-platform/savant-adapters-deepstream:0.3.11-6.4
+    #image: ghcr.io/insight-platform/savant-adapters-deepstream:0.2.11-6.3
+    restart: unless-stopped
+    ports:
+      - 554:554    # RTSP
+      - 8889:8889  # WebRTC
+      - 13000:13000  # Savant API
+    volumes:
+      - zmq_sockets:/tmp/zmq-sockets
+      - ./assets/stub_imgs:/stub_imgs
+    environment:
+      - ZMQ_ENDPOINT=sub+bind:ipc:///tmp/zmq-sockets/output-video.ipc
+      - MAX_DELAY_MS=10000
+      - STUB_FILE_LOCATION=/stub_imgs/smpte100_1280x720.jpeg
+      - SOURCE_ID=source
+      - FRAMERATE=30/1
+      - DEV_MODE=True   # why?
+      #- SYNC_OUTPUT=True
+      - MAX_RESOLUTION=3840x3840
+    command: python -m adapters.ds.sinks.always_on_rtsp
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+volumes:
+  zmq_sockets:

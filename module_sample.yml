@@ -1,0 +1,103 @@
+name: trafalert
+
+parameters:
+  batch_size: 1
+  batched_push_timeout: 40000
+  sidebar_width: 0  # Set to 0 to disable sidebar
+  frame:
+    width: ${oc.env:MODULE_WIDTH, 1280}
+    height: ${oc.env:MODULE_HEIGHT, 1280}
+    padding:
+      keep: true
+      left: 0
+      right: ${parameters.sidebar_width}
+      top: 0
+      bottom: 0
+    geometry_base: 4
+
+  output_frame:
+    codec: ${oc.env:CODEC, 'h264'}
+
+  draw_func: {}
+  # draw_func:
+  #   module: overlay_draw_spec
+  #   class_name: Overlay
+  #   #kwargs:
+  #   rendered_objects:
+  #     peoplenet:
+  #       person:
+  #       face:
+
+  # Custom impl
+  objmeta_impl: ${oc.env:OBJMETA_IMPL, 'savant_meta'}
+
+  # # enable OpenTelemetry
+  # telemetry:
+  #   tracing:
+  #     sampling_period: 100
+  #     root_span_name: pipeline
+  #     provider: jaeger
+  #     provider_params:
+  #       service_name: demo-pipeline
+  #       endpoint: jaeger:6831
+
+#------
+
+pipeline:
+
+  elements:
+
+    - element: nvinfer@detector
+      # name: yolov8m
+      # model:
+        # remote:
+        #   url: s3://savant-data/models/yolov8m_f630b10/yolov8m_f630b10.zip
+        #   checksum_url: s3://savant-data/models/yolov8m_f630b10/yolov8m_f630b10.md5
+        #   parameters:
+        #     endpoint: https://eu-central-1.linodeobjects.com
+        # format: onnx
+        # model_file: yolov8m.onnx
+      name: yolov7
+      model:
+        format: onnx
+        model_file:  yolov7.onnx
+        input:
+          layer_name: images
+          shape: [3, 640, 640]
+          scale_factor: 0.0039215697906911373
+        output:
+          layer_names: [num_dets, det_boxes, det_scores, det_classes]
+          num_detected_classes: 80     # number of elements in labels.txt
+          objects:          # Keep only the objects below
+            - class_id: 0
+              label: person
+            - class_id: 1
+              label: bicycle
+            - class_id: 2
+              label: car
+            - class_id: 3
+              label: motorbike
+            - class_id: 5
+              label: bus
+            - class_id: 6
+              label: train
+            - class_id: 7
+              label: truck
+          converter:
+            module: savant.converter.yolo
+            # module: converter
+            class_name: TensorToBBoxConverter
+          #   kwargs:
+          #     confidence_threshold: 0.35
+          #   #   objmeta_impl: ${parameters.objmeta_impl}
+
+    - element: nvtracker
+      properties:
+        ll-lib-file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+        ll-config-file: ${oc.env:PROJECT_PATH}/src/config_tracker_NvDCF_perf.yml
+        #ll-config-file: ${oc.env:PROJECT_PATH}/src/config_tracker_NvDCF_accuracy.yml
+        # tracker-width: 640
+        # tracker-height: 384
+        tracker-width: 1280
+        tracker-height: 704     # must be multiple of 32
+
